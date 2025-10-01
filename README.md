@@ -54,23 +54,36 @@ At the end it will give us a security report of vulnerabilities found, if any, a
 ## Development Setup
 
 ### Environment
-You should create a virtualenv with the required dependencies by running
+RedAGPT ships with [`uv`](https://github.com/astral-sh/uv) workflows instead of the built-in `venv` module. This keeps dependency resolution fast and reproducible.
 
-```
-make virtualenv
-```
+1. Install `uv` (one-time):
 
-Activate the virtualenv by running
-```
-source ./.venv/bin/activate
-```
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. Create a fresh environment and install dependencies:
+
+   ```bash
+   make virtualenv
+   ```
+
+3. Activate the environment:
+
+   ```bash
+   source .venv/bin/activate
+   ```
 
 When a new requirement is needed you should add it to `unpinned_requirements.txt` and run
-```
+
+```bash
 make update-requirements-txt
 make virtualenv
 ```
-this ensure that all requirements are pinned and work together for ensuring reproducibility
+
+This ensures that all requirements are pinned and work together for ensuring reproducibility.
+
+See [`docs/CODEBASE_MAP.md`](docs/CODEBASE_MAP.md) for a guided tour of the repository layout.
 
 #### Make a copy of the example environment variables file
 ```
