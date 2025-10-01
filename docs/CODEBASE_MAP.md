@@ -47,6 +47,7 @@ This document provides a high-level tour of the repository structure and the pur
 
 * **Environment variables** – configure API keys (`OPENAI_API_KEY`, `STRIPE_*`, etc.) via `.env`.
 * **Python runtime** – Python 3.11 is required for the latest LangChain and OpenAI client releases.
+
 * **Vector store** – optional Redis instance referenced by `REDIS_URL`; falls back to in-process FAISS vectors when unavailable.
 * **External tooling** – assumes `hydra` is installed on the host for credential brute forcing.
 

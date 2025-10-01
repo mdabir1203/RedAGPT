@@ -1,5 +1,6 @@
 FROM python:3.11-slim
 
+
 WORKDIR /app
 
 RUN apt-get update \
@@ -15,6 +16,7 @@ RUN pip install --no-cache-dir uv
 COPY requirements.txt ./
 
 RUN uv venv --python 3.11 /opt/venv \
+
     && uv pip install --python /opt/venv -r requirements.txt
 
 ENV VIRTUAL_ENV=/opt/venv

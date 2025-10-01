@@ -5,6 +5,7 @@ VENV := .venv
 PYTHON_VERSION := 3.11
 
 
+
 virtualenv: ## Create uv-managed virtualenv and install dependencies
 	@if [ -d ${VENV} ]; then rm -rf ${VENV}; fi
 	${UV} venv --python ${PYTHON_VERSION} ${VENV}
