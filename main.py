@@ -74,29 +74,35 @@ def main():
                 print(f"{http_url} is not a valid URL. Try again")
 
         lgcheck = LoginChecker(http_url)
-        process = multiprocessing.Process(target=lgcheck.run())
+        process = multiprocessing.Process(target=lgcheck.run, daemon=True)
         process.start()
-        process.join()
 
-        seek_pos = None
-        while process.is_alive:
+        seek_pos = 0
+        while process.is_alive():
             if os.path.exists(lgcheck.logging_file_path):
                 with open(lgcheck.logging_file_path, "r") as runtxt:
-                    if seek_pos:
-                        runtxt.seek(seek_pos)
+                    runtxt.seek(seek_pos)
 
                     log_lines = runtxt.readlines()
                     if len(log_lines) > 0:
                         log_line = ''.join(log_lines).replace('\n', '')
                         pprint.pprint(f"log_line: {log_line}")
-                    
+
                     seek_pos = runtxt.tell()
                     print("sleep 10")
                     time.sleep(10)
 
-            process.join()
-            if process.exitcode is not None:
+            if not process.is_alive():
                 break
+
+        process.join()
+
+        if os.path.exists(lgcheck.logging_file_path):
+            with open(lgcheck.logging_file_path, "r") as runtxt:
+                runtxt.seek(seek_pos)
+                remaining = runtxt.read().strip()
+                if remaining:
+                    pprint.pprint(f"log_line: {remaining}")
         
         print("Tool completed run")
         print(lgcheck.autogpt_resp)
