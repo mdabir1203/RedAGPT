@@ -1,24 +1,28 @@
-FROM python:3.8
+FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN wget -O /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64
-RUN chmod +x /usr/local/bin/dumb-init
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && wget -O /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64 \
+    && chmod +x /usr/local/bin/dumb-init \
+    && apt-get purge -y --auto-remove wget \
+    && rm -rf /var/lib/apt/lists/*
 
+RUN pip install --no-cache-dir uv
 
-# Copy the requirements.txt file to the container
-COPY requirements.txt .
+# Copy dependency manifests first to leverage Docker layer caching
+COPY requirements.txt ./
 
-# Install the required packages
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -r unpinned_requirements.txt
+RUN uv venv --python 3.11 /opt/venv \
+    && uv pip install --python /opt/venv -r requirements.txt
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 # Copy the rest of your application code to the container
 COPY . .
 
-RUN chmod +x .venv/bin/activate
-RUN .venv/bin/activate
-
 # Set the entry point for your application
 ENTRYPOINT ["/usr/local/bin/dumb-init", "--"]
-CMD ["dumb-init", "python", "main.py" ]
+CMD ["python", "main.py"]

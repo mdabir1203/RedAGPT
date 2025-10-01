@@ -18,17 +18,19 @@ Overall, the tool kit is for security professionals looking for smarter security
 
 ## Development
 * Engineering security tools through AutoGPT prompting
-* Integration with streamlit chatbot
+* Integration with a multi-page Streamlit experience (landing page + audit console)
+* Built-in Stripe checkout flow for rapid monetisation
 * Report generation
 * Dynamic VectorStorage integration
 
 ## Coding Libraries Used
-* LangChain
+* LangChain core & community toolkits
 * AutoGPT experimental module via LangChain
-* Redis vectorstorage module via LangChain
+* LangChain OpenAI client & Redis/FAISS vector storage
+* Stripe checkout SDK
 
 ## Tech Used
-* Python version 3.8
+* Python version 3.11
 * Redis Vector Storage 6.2.10
 * Ubuntu (WSL) 22.04 LTS
 * Kali Linux 6.1.0
@@ -52,32 +54,56 @@ At the end it will give us a security report of vulnerabilities found, if any, a
 ## Development Setup
 
 ### Environment
-You should create a virtualenv with the required dependencies by running
+RedAGPT ships with [`uv`](https://github.com/astral-sh/uv) workflows instead of the built-in `venv` module. This keeps dependency resolution fast and reproducible.
 
-```
-make virtualenv
-```
+1. Install `uv` (one-time):
 
-Activate the virtualenv by running
-```
-source ./.venv/bin/activate
-```
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. Create a fresh environment targeting Python 3.11 and install dependencies:
+
+   ```bash
+   make virtualenv
+   ```
+
+3. Activate the environment:
+
+   ```bash
+   source .venv/bin/activate
+   ```
 
 When a new requirement is needed you should add it to `unpinned_requirements.txt` and run
-```
+
+```bash
 make update-requirements-txt
 make virtualenv
 ```
-this ensure that all requirements are pinned and work together for ensuring reproducibility
+
+This ensures that all requirements are pinned and work together for ensuring reproducibility.
+
+See [`docs/CODEBASE_MAP.md`](docs/CODEBASE_MAP.md) for a guided tour of the repository layout.
 
 #### Make a copy of the example environment variables file
 ```
 cp .env.example .env
 ```
 
+#### Stripe monetisation setup
+
+Configure the following environment variables to enable the built-in Stripe checkout flow:
+
+* `STRIPE_API_KEY` – your Stripe secret key.
+* `STRIPE_PRICE_ID` – the recurring price or product to bill for subscriptions.
+* `STRIPE_SUCCESS_URL` – URL customers are redirected to after a successful purchase.
+* `STRIPE_CANCEL_URL` – URL customers are redirected to when they cancel checkout.
+
+These values can be added to your `.env` file so they are loaded automatically.
+
 #### Run the app
 ```
-streamlit run chatbot.py | tail -n +6 > tools/logs/logtest04292023.txt
+streamlit run chatbot.py
 ```
 
 ## Gallery
