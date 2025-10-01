@@ -51,6 +51,13 @@ At the end it will give us a security report of vulnerabilities found, if any, a
 * Integration into Kali Linux
 * Integration into Windows Powershell
 
+## Continuous Data Collection
+To keep security insights current and actionable, plan to evolve RedAGPT with continuous data collection capabilities:
+
+* **Event-Driven Runs** – Integrate ShadowMap executions into CI/CD pipelines, infrastructure-as-code deployments, and relevant cloud events so that every infrastructure change triggers an automated scan.
+* **Telemetry** – Gather detailed execution metrics such as the number of targets scanned, modules invoked, runtime, and any errors to monitor tool performance and surface emerging security signals.
+* **Versioned Artifacts** – Persist SBOMs, vulnerability reports, and reconnaissance data with timestamps so historical artifacts can be compared for drift detection and regression tracking.
+
 ## Development Setup
 
 ### Environment

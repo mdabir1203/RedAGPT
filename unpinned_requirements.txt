@@ -12,7 +12,5 @@ tiktoken
 redis
 streamlit
 streamlit-chat
-duckduckgo-search
-stripe
-tldextract
-python-whois
+ddgs
+langchain_experimental
