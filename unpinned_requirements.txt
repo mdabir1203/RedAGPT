@@ -1,4 +1,7 @@
 langchain
+langchain-experimental
+langchain-community
+langchain-openai
 python-dotenv
 validators
 faiss-cpu
@@ -8,5 +11,7 @@ tiktoken
 redis
 streamlit
 streamlit-chat
-duckduckgo
-langchain_experimental
+duckduckgo-search
+stripe
+tldextract
+python-whois

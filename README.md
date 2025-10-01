@@ -18,14 +18,16 @@ Overall, the tool kit is for security professionals looking for smarter security
 
 ## Development
 * Engineering security tools through AutoGPT prompting
-* Integration with streamlit chatbot
+* Integration with a multi-page Streamlit experience (landing page + audit console)
+* Built-in Stripe checkout flow for rapid monetisation
 * Report generation
 * Dynamic VectorStorage integration
 
 ## Coding Libraries Used
-* LangChain
+* LangChain core & community toolkits
 * AutoGPT experimental module via LangChain
-* Redis vectorstorage module via LangChain
+* LangChain OpenAI client & Redis/FAISS vector storage
+* Stripe checkout SDK
 
 ## Tech Used
 * Python version 3.8
@@ -75,9 +77,20 @@ this ensure that all requirements are pinned and work together for ensuring repr
 cp .env.example .env
 ```
 
+#### Stripe monetisation setup
+
+Configure the following environment variables to enable the built-in Stripe checkout flow:
+
+* `STRIPE_API_KEY` – your Stripe secret key.
+* `STRIPE_PRICE_ID` – the recurring price or product to bill for subscriptions.
+* `STRIPE_SUCCESS_URL` – URL customers are redirected to after a successful purchase.
+* `STRIPE_CANCEL_URL` – URL customers are redirected to when they cancel checkout.
+
+These values can be added to your `.env` file so they are loaded automatically.
+
 #### Run the app
 ```
-streamlit run chatbot.py | tail -n +6 > tools/logs/logtest04292023.txt
+streamlit run chatbot.py
 ```
 
 ## Gallery
