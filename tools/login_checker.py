@@ -7,40 +7,86 @@ THIS IS DANGEROUS TO RUN
 Uses the hydra cli program
 https://www.cyberpunk.rs/password-cracker-thc-hydra
 """
-import os
-import uuid
-import sys
-import random
-from urllib.parse import urlparse
-from datetime import datetime
-import os
 import logging
+import os
+import shutil
 import sys
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
+from urllib.parse import urlparse
 
-from langchain.agents import Tool
-from langchain.utilities import BashProcess
-from langchain.tools.file_management.write import WriteFileTool
-from langchain.tools.file_management.read import ReadFileTool
-from langchain.tools.python.tool import PythonREPLTool
-from langchain.utilities import GoogleSearchAPIWrapper
-from langchain.tools import DuckDuckGoSearchRun
-# from langchain.tools import ShellTool
-
-# from langchain.vectorstores import FAISS
-# import faiss
-# from langchain.docstore import InMemoryDocstore
-from langchain.vectorstores.redis import Redis
-import redis
-
-from langchain.embeddings import OpenAIEmbeddings
-
+from langchain_core.tools import Tool
+from langchain_community.tools import DuckDuckGoSearchRun, ReadFileTool, ShellTool, WriteFileTool
+from langchain_community.utilities.google_search import GoogleSearchAPIWrapper
+from langchain_community.vectorstores import FAISS, Redis
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_experimental.autonomous_agents import AutoGPT
-from langchain.chat_models import ChatOpenAI
 
 from tools.stream_to_logger import StreamToLogger
 
+
+@dataclass
+class EnvironmentConfig:
+    """Runtime configuration derived from environment variables."""
+
+    openai_api_key: str
+    redis_url: Optional[str]
+    google_api_key: Optional[str]
+    google_cse_id: Optional[str]
+    openai_model: str = "gpt-4o-mini"
+
+def _get_env_config() -> EnvironmentConfig:
+    """Load configuration from the current environment with validation."""
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise EnvironmentError(
+            "OPENAI_API_KEY must be set to run the login checker."
+        )
+
+    return EnvironmentConfig(
+        openai_api_key=openai_api_key,
+        redis_url=os.getenv("REDIS_URL"),
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+        google_cse_id=os.getenv("GOOGLE_CSE_ID"),
+        openai_model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
+    )
+
+
+def _build_google_search_tool(config: EnvironmentConfig) -> Optional[Tool]:
+    """Create a Google search tool if credentials are present."""
+
+    if config.google_api_key and config.google_cse_id:
+        wrapper = GoogleSearchAPIWrapper(
+            google_api_key=config.google_api_key,
+            google_cse_id=config.google_cse_id,
+        )
+        return Tool(
+            name="search",
+            func=wrapper.run,
+            description=(
+                "Useful for answering questions about current events. "
+                "Ask targeted questions."
+            ),
+        )
+
+    return None
+
+
+def _build_shell_tool() -> Tool:
+    shell = ShellTool()
+    return Tool(
+        name="bash",
+        func=shell.run,
+        description="Execute safe, non-interactive shell commands.",
+    )
+
+
 class LoginChecker:
     def __init__(self, http_url):
+        self.config = _get_env_config()
         self.uuid = str(uuid.uuid4()).replace('-', '')
 
         self.autogpt_resp = ";_; failed"
@@ -63,45 +109,44 @@ class LoginChecker:
 
         if not os.path.exists(self.logging_file_path):
             open(self.logging_file_path, "w").close()
-        
+
         logging.basicConfig(
             filename=self.logging_file_path,
             level=logging.INFO,
             format="\n%(message)s\n")
 
         self.logging = logging.getLogger(__name__)
-        
-        self.tools = [
-            Tool(
-                "search",
-                GoogleSearchAPIWrapper().run,
-                """
-                Useful for when you need to answer questions about current events. 
-                You should ask targeted questions
-                """
-            ),
-            # PythonREPLTool(),
-            # ShellTool(),
-            Tool(
-                "bash",
-                BashProcess().run,
-                "useful for when you want to run a command in the bash terminal."
-            ),
-            WriteFileTool(),
-            ReadFileTool(),
-            Tool(
-                "search2",
-                DuckDuckGoSearchRun().run,
-                """
-                Useful for when you need to answer questions about current events. 
-                You should ask targeted questions
-                Use this when search hits a quota limit
-                """
+        os.environ.setdefault("OPENAI_API_KEY", self.config.openai_api_key)
 
+        self.tools = []
+
+        google_search_tool = _build_google_search_tool(self.config)
+        if google_search_tool:
+            self.tools.append(google_search_tool)
+        else:
+            self.logging.info(
+                "Google search credentials not provided; defaulting to DuckDuckGo search."
             )
-        ]
-        
-        self.embeddings = OpenAIEmbeddings()
+
+        # PythonREPLTool(),
+        # ShellTool(),
+        self.tools.extend(
+            [
+                _build_shell_tool(),
+                WriteFileTool(),
+                ReadFileTool(),
+                Tool(
+                    name="search2",
+                    func=DuckDuckGoSearchRun().run,
+                    description=(
+                        "Useful for questions about current events. "
+                        "Prefer targeted queries and use when Google search is unavailable."
+                    ),
+                ),
+            ]
+        )
+
+        self.embeddings = OpenAIEmbeddings(api_key=self.config.openai_api_key)
 
         self.error_log_path = f"{logs_path}/lc_error{datetime.now().strftime('%Y%m%d_%H%M')}_{self.uuid}.txt"
         if not os.path.exists(self.error_log_path):
@@ -155,56 +200,62 @@ class LoginChecker:
             # "Congrats, you have completed all the tasks successfully, once the report is created, stop all other tasks"
         ]
 
-        try:
-            sys.stdout = StreamToLogger(self.logging, logging.INFO)
-            # check if index name exists and if not create it
-            # connect to Redis server
-            # redis_check = redis.Redis.from_url(os.environ["REDIS_URL"])
+        sys.stdout = StreamToLogger(self.logging, logging.INFO)
+        sys.stderr = StreamToLogger(self.logging, logging.ERROR)
+        self.vectorstore = self._initialise_memory_store()
+        self.memory = self.vectorstore.as_retriever()
+        self._warn_missing_hydra()
 
-            # check if the index exists
-            # if len(redis_check.keys(
-            #     "doc:{}*".format(redis_idx_name)
-            # )) == 0:
-            # create the index if it doesn't exist
+    def _warn_missing_hydra(self) -> None:
+        """Emit a warning when the hydra CLI is not installed."""
 
-            Redis.from_texts(
-                texts=["hacker"],
-                redis_url=os.environ["REDIS_URL"],
-                index_name=self.uuid,
-                embedding=self.embeddings
+        if shutil.which("hydra") is None:
+            self.logging.warning(
+                "hydra command is not available on PATH; the brute-force goal will "
+                "fail fast unless the agent installs it."
             )
 
-            self.vectorstore = Redis(
-                redis_url=os.environ["REDIS_URL"],
-                index_name=self.uuid,
-                embedding_function=self.embeddings.embed_query
-            )
+    def _initialise_memory_store(self):
+        """Create the vector store used as long-term memory."""
 
-            # using faiss
-            # possibly can use redis but will need to update
-            # the landchain agent.py in experimental for autogpt
-            # to use add_text
-            # embedding_size = 1536
-            # index = faiss.IndexFlatL2(embedding_size)
-            # self.vectorstore = FAISS(self.embeddings.embed_query, index, InMemoryDocstore({}), {})
+        if self.config.redis_url:
+            try:
+                Redis.from_texts(
+                    texts=["hacker"],
+                    redis_url=self.config.redis_url,
+                    index_name=self.uuid,
+                    embedding=self.embeddings,
+                )
 
+                return Redis(
+                    redis_url=self.config.redis_url,
+                    index_name=self.uuid,
+                    embedding_function=self.embeddings.embed_query,
+                )
+            except Exception as err:  # pragma: no cover - fallback path
+                self.logging.warning(
+                    "Redis memory initialisation failed (%s). Falling back to FAISS.",
+                    err,
+                )
 
-        except Exception as err:
-            print("Redis creation failed {err}")
-            # print("FAISS creation failed {err}")
-            # yield err
-            raise err
+        self.logging.info("Using in-memory FAISS vector store.")
+        return FAISS.from_texts(["hacker"], embedding=self.embeddings)
         
     
     def run(self):
-        llm = ChatOpenAI(temperature=0, streaming=True)
+        llm = ChatOpenAI(
+            temperature=0,
+            streaming=True,
+            api_key=self.config.openai_api_key,
+            model=self.config.openai_model,
+        )
 
         agent = AutoGPT.from_llm_and_tools(
             ai_name=self.uuid,
             ai_role="Penetration Tester",
             tools=self.tools,
             llm=llm,
-            memory=self.vectorstore.as_retriever()
+            memory=self.memory,
         )
         agent.chain.verbose = False
 

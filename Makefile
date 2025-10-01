@@ -1,28 +1,22 @@
-SHELL :=./make-venv
-SHELL := /bin/sh
-
 .DEFAULT_GOAL := help
 
+UV := uv
 VENV := .venv
-PYTHON := python3.8
+PYTHON_VERSION := 3.11
 
 
-virtualenv: ## Create virtualenv
+
+virtualenv: ## Create uv-managed virtualenv and install dependencies
 	@if [ -d ${VENV} ]; then rm -rf ${VENV}; fi
-	@mkdir ${VENV}
-	${PYTHON} -m venv ${VENV}
-	${VENV}/bin/pip install --upgrade pip==23.2.1
-	${VENV}/bin/pip install -r requirements.txt
+	${UV} venv --python ${PYTHON_VERSION} ${VENV}
+	${UV} pip install --python ${VENV} -r requirements.txt
 
-update-requirements-txt: VENV := /tmp/venv/
-update-requirements-txt: ## Update requirements.txt
+update-requirements-txt: ## Update requirements.txt using uv
 	@if [ -d ${VENV} ]; then rm -rf ${VENV}; fi
-	@mkdir ${VENV}
-	${PYTHON} -m venv ${VENV}
-	${VENV}/bin/pip install --upgrade pip==23.2.1
-	${VENV}/bin/pip install -r unpinned_requirements.txt
+	${UV} venv --python ${PYTHON_VERSION} ${VENV}
+	${UV} pip install --python ${VENV} -r unpinned_requirements.txt
 	echo "# Created automatically by make update-requirements-txt. Do not update manually!" > requirements.txt
-	${VENV}/bin/pip freeze | grep -v pkg_resources >> requirements.txt
+	${UV} pip freeze --python ${VENV} | grep -v pkg_resources >> requirements.txt
 
 clean: ## Clean python cache
 	find . -type d -name "__pycache__" -exec rm -rf {} \;
