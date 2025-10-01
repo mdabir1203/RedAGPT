@@ -2,7 +2,8 @@
 
 UV := uv
 VENV := .venv
-PYTHON_VERSION := 3.8
+PYTHON_VERSION := 3.11
+
 
 
 virtualenv: ## Create uv-managed virtualenv and install dependencies

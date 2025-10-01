@@ -30,7 +30,7 @@ Overall, the tool kit is for security professionals looking for smarter security
 * Stripe checkout SDK
 
 ## Tech Used
-* Python version 3.8
+* Python version 3.11
 * Redis Vector Storage 6.2.10
 * Ubuntu (WSL) 22.04 LTS
 * Kali Linux 6.1.0
@@ -61,8 +61,8 @@ RedAGPT ships with [`uv`](https://github.com/astral-sh/uv) workflows instead of 
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
+2. Create a fresh environment targeting Python 3.11 and install dependencies:
 
-2. Create a fresh environment and install dependencies:
 
    ```bash
    make virtualenv

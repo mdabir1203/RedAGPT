@@ -9,6 +9,7 @@ https://www.cyberpunk.rs/password-cracker-thc-hydra
 """
 import logging
 import os
+import shutil
 import sys
 import uuid
 from dataclasses import dataclass
@@ -108,14 +109,15 @@ class LoginChecker:
 
         if not os.path.exists(self.logging_file_path):
             open(self.logging_file_path, "w").close()
-        
+
         logging.basicConfig(
             filename=self.logging_file_path,
             level=logging.INFO,
             format="\n%(message)s\n")
 
         self.logging = logging.getLogger(__name__)
-        
+        os.environ.setdefault("OPENAI_API_KEY", self.config.openai_api_key)
+
         self.tools = []
 
         google_search_tool = _build_google_search_tool(self.config)
@@ -144,7 +146,7 @@ class LoginChecker:
             ]
         )
 
-        self.embeddings = OpenAIEmbeddings()
+        self.embeddings = OpenAIEmbeddings(api_key=self.config.openai_api_key)
 
         self.error_log_path = f"{logs_path}/lc_error{datetime.now().strftime('%Y%m%d_%H%M')}_{self.uuid}.txt"
         if not os.path.exists(self.error_log_path):
@@ -199,8 +201,19 @@ class LoginChecker:
         ]
 
         sys.stdout = StreamToLogger(self.logging, logging.INFO)
+        sys.stderr = StreamToLogger(self.logging, logging.ERROR)
         self.vectorstore = self._initialise_memory_store()
         self.memory = self.vectorstore.as_retriever()
+        self._warn_missing_hydra()
+
+    def _warn_missing_hydra(self) -> None:
+        """Emit a warning when the hydra CLI is not installed."""
+
+        if shutil.which("hydra") is None:
+            self.logging.warning(
+                "hydra command is not available on PATH; the brute-force goal will "
+                "fail fast unless the agent installs it."
+            )
 
     def _initialise_memory_store(self):
         """Create the vector store used as long-term memory."""

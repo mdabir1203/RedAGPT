@@ -1,4 +1,5 @@
-FROM python:3.8-slim
+FROM python:3.11-slim
+
 
 WORKDIR /app
 
@@ -14,7 +15,8 @@ RUN pip install --no-cache-dir uv
 # Copy dependency manifests first to leverage Docker layer caching
 COPY requirements.txt ./
 
-RUN uv venv --python 3.8 /opt/venv \
+RUN uv venv --python 3.11 /opt/venv \
+
     && uv pip install --python /opt/venv -r requirements.txt
 
 ENV VIRTUAL_ENV=/opt/venv
