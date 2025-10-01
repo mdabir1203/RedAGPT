@@ -1,88 +1,61 @@
-import base64
-import multiprocessing
-import os
-import pprint
-from datetime import datetime
+"""Streamlit application for RedAGPT."""
+from __future__ import annotations
 
-import openai
+import base64
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
 import streamlit as st
+import tldextract
 import validators
+import whois
 from dotenv import load_dotenv
 from PIL import Image
-from streamlit_chat import message
 
 from tools.login_checker import LoginChecker
-import tldextract
-import whois
+from tools.payments import StripeCheckoutError, create_checkout_session
 
-def is_gov_or_corp_url(url):
-    # List of known government and corporate domains
-    GOV_DOMAINS = ["gov", "mil"]
-    CORP_DOMAINS = ["com", "org", "net"]
-
-    # Extract the top-level domain (TLD) of the URL
-    ext = tldextract.extract(url)
-    tld = ext.suffix
-
-    # Check if the TLD matches a known government or corporate domain
-    if tld in GOV_DOMAINS or tld in CORP_DOMAINS:
-        return True
-    else:
-        return False
-
-def is_gov_url(url):
-    # Extract the domain name from the URL
-    domain_name = url.split("//")[-1].split("/")[0]
-
-    # Look up domain registration information using whois
-    domain_info = whois.whois(domain_name)
-
-    if domain_info:
-        try:
-            # Check if the domain belongs to a government entity
-            if 'government' in domain_info.name.lower() or 'gov' in domain_info.name.lower():
-                return True
-        except Exception:
-            pass
-        
-    return False
-    
-    
-def is_gov_or_corp_website(url):
-    # Check if the URL belongs to a government or corporate website
-    if is_gov_or_corp_url(url) or is_gov_url(url):
-        return True
-    else:
-        return False
-    
-# Change the webpage name and icon
-web_icon_path = os.path.abspath("imgs/web_icon.png")
-web_icon = Image.open(web_icon_path)
-st.set_page_config(
-    page_title="RedAGPT",
-    page_icon=web_icon,
-    initial_sidebar_state="expanded",
-)
-
-# Add audio player
-audio_path = os.path.abspath("audio/blade_soundtrack.mp3")
-audio_file = open(audio_path, "rb")
-audio_bytes = audio_file.read()
-st.sidebar.audio(audio_bytes, format="audio/mp3", start_time=0)
-
-log_dict = {"lfp": None, "ssp": None}
+BASE_DIR = Path(__file__).resolve().parent
+IMG_DIR = BASE_DIR / "imgs"
+AUDIO_DIR = BASE_DIR / "audio"
 
 
-def add_bg_from_local(image_file):
-    with open(image_file, "rb") as f:
-        img_bytes = f.read()
+@dataclass
+class StripeConfig:
+    price_id: Optional[str]
+    success_url: str
+    cancel_url: str
 
+    @classmethod
+    def from_env(cls) -> "StripeConfig":
+        return cls(
+            price_id=os.getenv("STRIPE_PRICE_ID"),
+            success_url=os.getenv("STRIPE_SUCCESS_URL", "https://example.com/success"),
+            cancel_url=os.getenv("STRIPE_CANCEL_URL", "https://example.com/cancel"),
+        )
+
+
+def _get_image_bytes(image_path: Path) -> Optional[bytes]:
+    if not image_path.exists():
+        return None
+    return image_path.read_bytes()
+
+
+def _set_background(image_path: Path) -> None:
+    image_bytes = _get_image_bytes(image_path)
+    if not image_bytes:
+        return
+
+    encoded = base64.b64encode(image_bytes).decode()
     st.markdown(
         f"""
         <style>
         .stApp {{
-            background-image: url('data:image/png;base64,{base64.b64encode(img_bytes).decode()}');
+            background-image: url('data:image/png;base64,{encoded}');
             background-size: cover;
+            background-position: center;
         }}
         </style>
         """,
@@ -90,289 +63,194 @@ def add_bg_from_local(image_file):
     )
 
 
-# Add img to the bg
-bg_img_path = os.path.abspath("imgs/bg_img.jpg")
-add_bg_from_local(bg_img_path)
+def _play_sidebar_audio(audio_path: Path) -> None:
+    if not audio_path.exists():
+        return
+    st.sidebar.audio(audio_path.read_bytes(), format="audio/mp3", start_time=0)
 
 
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-openai.api_base = "https://chimeragpt.adventblocks.cc/api/v1"
+def is_corporate_or_government_target(url: str) -> bool:
+    """Return True if the target is likely to be corporate or government owned."""
 
-st.markdown('<h1 style="color: white;">RedTeamAGPT</h1>', unsafe_allow_html=True)
+    try:
+        ext = tldextract.extract(url)
+    except Exception:
+        return False
 
-if "show_first_chatbot_msg" not in st.session_state:
-    st.session_state["show_first_chatbot_msg"] = True
+    tld = ext.suffix.lower()
+    if tld in {"gov", "mil"}:
+        return True
 
-if "set_local_or_remote" not in st.session_state:
-    st.session_state["set_local_or_remote"] = False
-if "user_local_remote" not in st.session_state:
-    st.session_state["user_local_remote"] = None
-if "edited_local_or_remote_msg_once" not in st.session_state:
-    st.session_state["edited_local_or_remote_msg_once"] = False
+    if tld in {"com", "org", "net"}:
+        try:
+            domain = url.split("//")[-1].split("/")[0]
+            info = whois.whois(domain)
+            if info and getattr(info, "name", None):
+                name_value = str(info.name).lower()
+                if "government" in name_value or ".gov" in name_value:
+                    return True
+        except Exception:
+            # WHOIS lookups can fail for many reasons; treat as non-government.
+            return False
 
-if "show_url_msg_once" not in st.session_state:
-    st.session_state["show_url_msg_once"] = False
-if "showed_url_msg_once" not in st.session_state:
-    st.session_state["showed_url_msg_once"] = False
-if "showed_url_msg_once_checked" not in st.session_state:
-    st.session_state["showed_url_msg_once_checked"] = False
-if "save_url_msg" not in st.session_state:
-    st.session_state["save_url_msg"] = None
-
-# Initialize first msgs in the bot
-if "bot_msgs" not in st.session_state:
-    st.session_state["bot_msgs"] = ["Local OR Remote"]
-if "user_msgs" not in st.session_state:
-    st.session_state["user_msgs"] = []
-
-if "allow_url_to_be_checked" not in st.session_state:
-    st.session_state["allow_url_to_be_checked"] = False
-
-if "seek_pos" not in st.session_state:
-    st.session_state["seek_pos"] = None
-if "process_started" not in st.session_state:
-    st.session_state["process_started"] = False
-
-# Set up the event flag for disabling the user input box
-if "disable_input" not in st.session_state:
-    st.session_state["disable_input"] = False
-
-if "security_summary_success" not in st.session_state:
-    st.session_state["security_summary_success"] = []
-if "security_summary_failure" not in st.session_state:
-    st.session_state["security_summary_failure"] = []
+    return False
 
 
-tools = ["Login Checker"]
-model = st.selectbox("Tools", options=tools)
+def _render_feature_grid() -> None:
+    st.subheader("Why security teams trust RedAGPT")
+    cols = st.columns(3)
+    features = [
+        ("Autonomous testing", "LangChain AutoGPT orchestrates full login audits with zero setup."),
+        ("Actionable reporting", "Generate remediation-ready security summaries for every run."),
+        ("Compliance guardrails", "Automatic checks prevent scans on sensitive or disallowed targets."),
+    ]
+    for col, (title, body) in zip(cols, features):
+        with col:
+            st.markdown(f"### {title}")
+            st.write(body)
 
-if model == "Login Checker":
-    if not st.session_state["set_local_or_remote"]:
-        placeholder = "Local or Remote"
-    else:
-        placeholder = "Enter URL here"
 
-    if not st.session_state["disable_input"]:
-        input_text = st.text_input(
-            "", placeholder=placeholder, key="input_text", label_visibility="hidden"
+def _render_stripe_cta(config: StripeConfig) -> None:
+    st.markdown("---")
+    st.subheader("Launch unlimited audits")
+    st.write(
+        "Unlock RedAGPT Pro for unlimited automated login form tests, priority support, and early access to tooling upgrades."
+    )
+
+    if not config.price_id:
+        st.info(
+            "Configure STRIPE_PRICE_ID, STRIPE_SUCCESS_URL, and STRIPE_CANCEL_URL to enable checkout."
         )
-        st.session_state["user_msgs"].append(input_text)
+        return
 
-        if not st.session_state["set_local_or_remote"]:  # Local or Remote
+    if st.button("Subscribe securely with Stripe", type="primary"):
+        try:
+            checkout_url = create_checkout_session(
+                price_id=config.price_id,
+                success_url=config.success_url,
+                cancel_url=config.cancel_url,
+            )
+            st.session_state["checkout_url"] = checkout_url
+            st.success("Checkout session created. Complete your subscription below.")
+        except StripeCheckoutError as exc:
+            st.error(str(exc))
 
-            if input_text == "Local" or input_text == "Remote":
-                st.session_state[
-                    "user_local_remote"
-                ] = input_text  # save the user's input
-                st.session_state["set_local_or_remote"] = True
-                st.experimental_rerun()  # Rerun the script so the "Enter URL here" can be shown in the box
-            else:
-                # show this msg in the bot only if it's not the first msg of the bot
-                if not st.session_state["show_first_chatbot_msg"]:
-                    if not st.session_state["edited_local_or_remote_msg_once"]:
-                        st.session_state["bot_msgs"][
-                            -1
-                        ] = "THE GIVEN INPUT IS INVALID.\nGIVE Local OR Remote"
-                        st.session_state["edited_local_or_remote_msg_once"] = True
-                    else:
-                        st.session_state["bot_msgs"].append(
-                            "THE GIVEN INPUT IS INVALID.\nGIVE Local OR Remote"
-                        )
-
-        else:  # Local or Remote has been set, now URL time
-
-            # The bot should ask the user to give a url or ip based on their previous option
-            if not st.session_state["show_url_msg_once"]:
-                if st.session_state["user_local_remote"] == "Local":
-                    msg = "GIVE URL"
-                else:  # Remote
-                    msg = "REMOTE SHOULD ONLY BE DONE ON IPs YOU OWN"
-
-                width = 20
-                padding = (width - len(msg)) // 8
-                centered_text = f"<div style='text-align: center;'>{' ' * padding}{msg}{' ' * padding}</div>"
-                decorative_lines = (
-                    f"<div style='text-align: center;'>{'💀' * width}</div>"
-                )
-
-                # Combine the decorative lines and centered text
-                msg = f"{decorative_lines * 2}<br>{centered_text}<br>{decorative_lines * 2}"
-
-                # Streamlit gets confused here, so I assign the msg to a session
-                # instead of doing len(st.session_state["bot_msgs"][-1])
-                # where I show it on the bottom of the script
-                st.session_state["save_url_msg"] = msg
-
-                st.session_state["show_url_msg_once"] = True
-                st.experimental_rerun()  # Rerun script to show the url msg in the bot
-
-            if not st.session_state["allow_url_to_be_checked"]:
-                # check for gov or corp
-
-                if validators.url(input_text) and not is_gov_or_corp_website(input_text):
-                    st.session_state["allow_url_to_be_checked"] = True
-                else:
-                    # Edit the url msg from "GIVE URL" TO "THE GIVEN URL IS INVALID"
-                    # as we show one response from the bot and one from the user for each interaction
-                    # and as we provide the "GIVE URL" to direct the user to give a url
-                    # then won't be able to get a response by the bot based on the user's input
-                    # thus, the needed change but it only need to be done once
-                    if (
-                        st.session_state["showed_url_msg_once"]
-                        and not st.session_state["showed_url_msg_once_checked"]
-                    ):
-                        st.error("THE GIVEN URL IS INVALID OR FORBIDDEN!")
-                        st.session_state["showed_url_msg_once_checked"] = True
-                    else:
-                        st.session_state["bot_msgs"].append("GOOD JOB. YOUR OPTION HAS BEEN SET.")
-
-        if st.session_state["allow_url_to_be_checked"]:
-            with st.spinner(f"Testing website {input_text}. This will take a while."):
-                if not st.session_state["process_started"]:
-                    lgcheck = LoginChecker(input_text)
-                    process = multiprocessing.Process(
-                        target=lgcheck.run()
-
-                    )
-
-                    process.start()
-                    process.join()
-                    st.session_state["process_started"] = True
-
-                process.join()
-                if not process.is_alive():
-                    st.session_state["process_started"] = False
-
-                    if os.path.exists(lgcheck.summary_file_path):
-                        login_checker_msg = "Login Checker process has completed."
-
-                        st.success(login_checker_msg)
-
-                        # st.session_state["security_summary_success"].append(
-                        #     login_checker_msg
-                        # )
-
-                        st.success(lgcheck.autogpt_resp)
-        
-                        # st.session_state["security_summary_success"].append(
-                        #     lgcheck.autogpt_resp
-                        # )
-
-                        with open(lgcheck.summary_file_path, "r") as sectxt:
-                            summary = "".join(sectxt.readlines())
-                            st.success(summary)
-                            # st.session_state["security_summary_success"].append(summary)
-
-                    else:
-                        login_checker_msg = "Login Check failed. No report found."
-                        st.error(login_checker_msg)
-                        # st.session_state["security_summary_failure"].append(
-                        #     login_checker_msg
-                        # )
-                        
-                        st.error(lgcheck.autogpt_resp)
-                        # st.session_state["security_summary_failure"].append(
-                        #     lgcheck.autogpt_resp
-                        # )
-                    
-                    with st.expander("debug log"):
-                        if os.path.exists(lgcheck.logging_file_path):
-                            with open(lgcheck.logging_file_path, "r") as runtxt:
-                                formatted_readlines = ''.join(runtxt.readlines())
-                                st.write(formatted_readlines)
-
-                st.session_state["disable_input"] = True  # Disable input
-                # st.experimental_rerun()
-    else:
-        if len(st.session_state["security_summary_failure"]) != 0:
-            st.error(st.session_state["security_summary_failure"])
-        else:
-            for item in st.session_state["security_summary_success"]:
-                st.success(item)
-
-        st.warning("SESSION EXPIRED.\nREFRESH THE PAGE.")
+    checkout_url = st.session_state.get("checkout_url")
+    if checkout_url:
+        st.link_button("Open secure Stripe checkout", checkout_url, type="secondary")
 
 
-# Check that the security report is not created yet
-if not st.session_state["disable_input"]:
-    # Show the first msg in the chatbot
-    if st.session_state["show_first_chatbot_msg"]:
-        message(
-            st.session_state["bot_msgs"], key=str(len(st.session_state["bot_msgs"]) - 1)
+def render_landing_page() -> None:
+    st.title("RedAGPT Security Suite")
+    st.write(
+        "Automate login form penetration testing with production-ready guardrails."
+    )
+
+    _render_feature_grid()
+
+    st.markdown(
+        """
+        #### Built for scale
+        * Queue AI-driven investigations while your team focuses on remediation.
+        * Store structured findings in Redis or fall back to in-memory FAISS automatically.
+        * Deploy in minutes with `.env` driven configuration.
+        """
+    )
+
+    _render_stripe_cta(StripeConfig.from_env())
+
+
+def _validate_target(url: str, mode: str) -> Optional[str]:
+    if not validators.url(url):
+        return "Please provide a valid URL, including the scheme (e.g. https://example.com/login)."
+
+    if mode == "Remote" and is_corporate_or_government_target(url):
+        return "Remote scans are restricted for corporate or government-owned targets."
+
+    return None
+
+
+def _display_run_results(checker: LoginChecker) -> None:
+    summary_path = Path(checker.summary_file_path)
+    log_path = Path(checker.logging_file_path)
+
+    if summary_path.exists():
+        summary_text = summary_path.read_text(encoding="utf-8")
+        st.success("Audit completed successfully.")
+        st.markdown("#### Security summary")
+        st.write(summary_text)
+        st.download_button(
+            "Download report",
+            data=summary_text,
+            file_name=summary_path.name,
+            mime="text/plain",
         )
-        st.session_state["show_first_chatbot_msg"] = False
+    else:
+        st.error("Audit failed — no summary was generated.")
 
-    else:  # all other times
+    if log_path.exists():
+        with st.expander("Execution log", expanded=False):
+            st.code(log_path.read_text(encoding="utf-8") or "Log file was empty.")
 
-        # Show the "GIVE URL" msg in the chatbot
-        if (
-            st.session_state["show_url_msg_once"]
-            and not st.session_state["showed_url_msg_once"]
-        ):
-            st.session_state["bot_msgs"].append(st.session_state["save_url_msg"])
-            # message(
-            #     st.session_state["save_url_msg"],
-            #     key=str(len(st.session_state["bot_msgs"])),
-            # )
-            st.markdown(st.session_state["save_url_msg"], unsafe_allow_html=True)
 
-            st.session_state["showed_url_msg_once"] = True
+def render_security_audit() -> None:
+    st.header("Login form penetration test")
+    st.write(
+        "Provide a login form URL to orchestrate an automated penetration test with RedAGPT."
+    )
 
-        else:
-            # Show all msgs after the first msg is already shown
-            # Filter out any empty entry from the user
-            filtered_user_msgs1 = [
-                (i, msg)
-                for i, msg in enumerate(st.session_state["user_msgs"])
-                if len(msg) != 0
-            ]
-            filtered_bot_msgs1 = [
-                (i, msg)
-                for i, msg in enumerate(st.session_state["bot_msgs"])
-                if len(msg) != 0
-            ]
+    mode = st.radio("Target location", ["Local", "Remote"], horizontal=True)
+    url = st.text_input("Login form URL", placeholder="https://your-app/login")
 
-            # If the two lists do not have the same
-            # Decrease the size of the longer list by one
-            # so they can match
-            filtered_user_msgs2 = filtered_user_msgs1
-            filtered_bot_msgs2 = filtered_bot_msgs1
-            if len(filtered_user_msgs1) > len(filtered_bot_msgs1):
-                filtered_user_msgs2 = filtered_user_msgs1[:-1]
-            elif len(filtered_user_msgs1) < len(filtered_bot_msgs1):
-                filtered_bot_msgs2 = filtered_bot_msgs1[:-1]
+    if st.button("Run security audit", type="primary"):
+        error = _validate_target(url, mode)
+        if error:
+            st.error(error)
+            return
 
-            # Initialize the flag
-            executed_once = False
+        try:
+            checker = LoginChecker(url)
+        except EnvironmentError as exc:
+            st.error(str(exc))
+            return
 
-            # Match the elements
-            for (user_i, user_msg), (bot_i, bot_msg) in reversed(
-                list(zip(filtered_user_msgs2, filtered_bot_msgs2))
-            ):
-                if not executed_once and (
-                    len(filtered_user_msgs2) != len(filtered_bot_msgs2)
-                ):
-                    # Show the last element that was filtered above
-                    if len(filtered_user_msgs2) > len(filtered_bot_msgs2):
-                        message(
-                            filtered_user_msgs2[user_i + 1][
-                                1
-                            ],  # Extract message text from the tuple
-                            is_user=True,
-                            key=str(user_i + 1) + "_user",
-                        )
-                    elif len(filtered_user_msgs2) < len(filtered_bot_msgs2):
-                        message(
-                            filtered_bot_msgs2[bot_i + 1][
-                                1
-                            ],  # Extract message text from the tuple
-                            key=str(bot_i + 1),
-                        )
+        with st.spinner("Running autonomous security audit. This can take several minutes..."):
+            try:
+                checker.run()
+            except Exception as exc:  # pragma: no cover - surfaced to UI
+                st.error(f"Audit failed: {exc}")
+                return
 
-                    # For showing the extra element only once and first in the conversation
-                    executed_once = True
+        _display_run_results(checker)
 
-                # Print the matched elements
-                message(user_msg, is_user=True, key=str(user_i) + "_user")
-                message(bot_msg, key=str(bot_i))
+
+def main() -> None:
+    load_dotenv()
+
+    icon_path = IMG_DIR / "web_icon.png"
+    icon_image = Image.open(icon_path) if icon_path.exists() else None
+    st.set_page_config(
+        page_title="RedAGPT Security Suite",
+        page_icon=icon_image,
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    _set_background(IMG_DIR / "bg_img.jpg")
+    _play_sidebar_audio(AUDIO_DIR / "blade_soundtrack.mp3")
+
+    page = st.sidebar.radio("Navigation", ["Overview", "Security audit"], index=0)
+
+    if page == "Overview":
+        render_landing_page()
+    else:
+        render_security_audit()
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        "Need help? Email **support@redagpt.io** for onboarding assistance."
+    )
+
+
+if __name__ == "__main__":
+    main()
